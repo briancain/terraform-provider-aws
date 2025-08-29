@@ -32,7 +32,7 @@ func TestAccARCRegionSwitchPlan_route53HealthCheck(t *testing.T) {
 			testAccPreCheck(ctx, t)
 		},
 		ErrorCheck:               acctest.ErrorCheck(t, names.ARCRegionSwitch),
-		ProtoV5ProviderFactories: acctest.ProtoV5ProviderFactories,
+		ProtoV5ProviderFactories: acctest.ProtoV5FactoriesAlternate(ctx, t),
 		CheckDestroy:             testAccCheckPlanDestroy(ctx),
 		Steps: []resource.TestStep{
 			{
@@ -212,8 +212,7 @@ func TestAccARCRegionSwitchPlan_complex(t *testing.T) {
 						"timeout_minutes":    "15",
 					}),
 				),
-				// API returns workflows in different order than specified, causing plan differences
-				// This is expected behavior and doesn't affect functionality
+				// API returns EKS scaling resources in different order than specified
 				ExpectNonEmptyPlan: true,
 			},
 			{
@@ -226,6 +225,13 @@ func TestAccARCRegionSwitchPlan_complex(t *testing.T) {
 					"workflow.1.step.6.arc_routing_control_config.0.region_and_routing_controls.1.region",
 					"workflow.1.step.6.arc_routing_control_config.0.region_and_routing_controls.0.routing_control_arns.0",
 					"workflow.1.step.6.arc_routing_control_config.0.region_and_routing_controls.1.routing_control_arns.0",
+					// EKS scaling resources may be returned in different order
+					"workflow.0.step.5.eks_resource_scaling_config.0.scaling_resources.0.resources.0.hpa_name",
+					"workflow.0.step.5.eks_resource_scaling_config.0.scaling_resources.0.resources.0.name",
+					"workflow.0.step.5.eks_resource_scaling_config.0.scaling_resources.0.resources.0.resource_name",
+					"workflow.0.step.5.eks_resource_scaling_config.0.scaling_resources.0.resources.1.hpa_name",
+					"workflow.0.step.5.eks_resource_scaling_config.0.scaling_resources.0.resources.1.name",
+					"workflow.0.step.5.eks_resource_scaling_config.0.scaling_resources.0.resources.1.resource_name",
 				},
 			},
 		},
@@ -580,7 +586,7 @@ resource "aws_vpc" "primary" {
 }
 
 resource "aws_vpc" "secondary" {
-  provider             = aws.secondary
+  provider = awsalternate
   cidr_block           = "10.2.0.0/16"
   enable_dns_hostnames = true
   enable_dns_support   = true

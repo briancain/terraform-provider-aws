@@ -252,8 +252,6 @@ func TestAccARCRegionSwitchPlan_multipleWorkflowsSameAction(t *testing.T) {
 						"workflow_target_action": "deactivate",
 					}),
 				),
-				// API returns workflows in different order than specified
-				ExpectNonEmptyPlan: true,
 			},
 		},
 	})

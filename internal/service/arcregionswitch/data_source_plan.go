@@ -10,265 +10,167 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/arcregionswitch"
-	"github.com/aws/aws-sdk-go-v2/service/arcregionswitch/types"
-	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
+	awstypes "github.com/aws/aws-sdk-go-v2/service/arcregionswitch/types"
+	"github.com/hashicorp/terraform-plugin-framework/attr"
+	"github.com/hashicorp/terraform-plugin-framework/datasource"
+	fwschema "github.com/hashicorp/terraform-plugin-framework/datasource/schema"
+	fwdiag "github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
+	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/retry"
-	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
-	"github.com/hashicorp/terraform-provider-aws/internal/conns"
-	"github.com/hashicorp/terraform-provider-aws/internal/errs/sdkdiag"
-	tftags "github.com/hashicorp/terraform-provider-aws/internal/tags"
+	"github.com/hashicorp/terraform-provider-aws/internal/framework"
+	fwvalidators "github.com/hashicorp/terraform-provider-aws/internal/framework/validators"
 	"github.com/hashicorp/terraform-provider-aws/internal/tfresource"
-	"github.com/hashicorp/terraform-provider-aws/internal/verify"
 	"github.com/hashicorp/terraform-provider-aws/names"
 )
 
-// @SDKDataSource("aws_arcregionswitch_plan", name="Plan")
-func DataSourcePlan() *schema.Resource {
-	return &schema.Resource{
-		ReadWithoutTimeout: dataSourcePlanRead,
+func listRoute53HealthChecks(ctx context.Context, conn *arcregionswitch.Client, planArn string) ([]awstypes.Route53HealthCheck, error) {
+	input := &arcregionswitch.ListRoute53HealthChecksInput{
+		Arn: aws.String(planArn),
+	}
 
-		Timeouts: &schema.ResourceTimeout{
-			Read: schema.DefaultTimeout(5 * time.Minute),
-		},
+	output, err := conn.ListRoute53HealthChecks(ctx, input)
 
-		Schema: map[string]*schema.Schema{
-			names.AttrARN: {
-				Type:         schema.TypeString,
-				Required:     true,
-				ValidateFunc: verify.ValidARN,
+	if err != nil {
+		return nil, err
+	}
+
+	return output.HealthChecks, nil
+}
+
+// @FrameworkDataSource("aws_arcregionswitch_plan", name="Plan")
+func newDataSourcePlan(context.Context) (datasource.DataSourceWithConfigure, error) {
+	d := &dataSourcePlan{}
+	return d, nil
+}
+
+type dataSourcePlan struct {
+	framework.DataSourceWithConfigure
+}
+
+func (d *dataSourcePlan) Metadata(_ context.Context, request datasource.MetadataRequest, response *datasource.MetadataResponse) {
+	response.TypeName = request.ProviderTypeName + "_arcregionswitch_plan"
+}
+
+func (d *dataSourcePlan) Schema(ctx context.Context, req datasource.SchemaRequest, resp *datasource.SchemaResponse) {
+	resp.Schema = fwschema.Schema{
+		Attributes: map[string]fwschema.Attribute{
+			names.AttrARN: fwschema.StringAttribute{
+				Required: true,
+				Validators: []validator.String{
+					fwvalidators.ARN(),
+				},
 			},
-
-			"wait_for_health_checks": {
-				Type:        schema.TypeBool,
+			names.AttrName: fwschema.StringAttribute{
+				Computed: true,
+			},
+			"execution_role": fwschema.StringAttribute{
+				Computed: true,
+			},
+			"recovery_approach": fwschema.StringAttribute{
+				Computed: true,
+			},
+			"regions": fwschema.ListAttribute{
+				Computed:    true,
+				ElementType: types.StringType,
+			},
+			names.AttrDescription: fwschema.StringAttribute{
+				Computed: true,
+			},
+			"primary_region": fwschema.StringAttribute{
+				Computed: true,
+			},
+			"recovery_time_objective_minutes": fwschema.Int64Attribute{
+				Computed: true,
+			},
+			"wait_for_health_checks": fwschema.BoolAttribute{
 				Optional:    true,
-				Default:     false,
 				Description: "Wait for Route53 health check IDs to be populated (takes ~4 minutes)",
 			},
-
-			"route53_health_checks": {
-				Type:     schema.TypeList,
-				Computed: true,
-				Elem: &schema.Resource{
-					Schema: map[string]*schema.Schema{
-						"health_check_id": {
-							Type:     schema.TypeString,
-							Computed: true,
-						},
-						names.AttrHostedZoneID: {
-							Type:     schema.TypeString,
-							Computed: true,
-						},
-						"record_name": {
-							Type:     schema.TypeString,
-							Computed: true,
-						},
-						names.AttrRegion: {
-							Type:     schema.TypeString,
-							Computed: true,
-						},
+			"route53_health_checks": fwschema.ListAttribute{
+				ElementType: types.ObjectType{
+					AttrTypes: map[string]attr.Type{
+						"health_check_id":      types.StringType,
+						names.AttrHostedZoneID: types.StringType,
+						"record_name":          types.StringType,
+						names.AttrRegion:       types.StringType,
 					},
 				},
+				Computed:    true,
+				Description: "Route53 health checks associated with the plan",
 			},
-			names.AttrName: {
-				Type:     schema.TypeString,
-				Computed: true,
-			},
-			"execution_role": {
-				Type:     schema.TypeString,
-				Computed: true,
-			},
-			"recovery_approach": {
-				Type:     schema.TypeString,
-				Computed: true,
-			},
-			"regions": {
-				Type:     schema.TypeList,
-				Computed: true,
-				Elem: &schema.Schema{
-					Type: schema.TypeString,
-				},
-			},
-			"workflow": {
-				Type:     schema.TypeList,
-				Computed: true,
-				Elem: &schema.Resource{
-					Schema: map[string]*schema.Schema{
-						"workflow_target_action": {
-							Type:     schema.TypeString,
-							Computed: true,
-						},
-						"workflow_target_region": {
-							Type:     schema.TypeString,
-							Computed: true,
-						},
-						"workflow_description": {
-							Type:     schema.TypeString,
-							Computed: true,
-						},
-						"step": {
-							Type:     schema.TypeList,
-							Computed: true,
-							Elem: &schema.Resource{
-								Schema: dataSourceStepSchema(),
-							},
-						},
-					},
-				},
-			},
-			names.AttrDescription: {
-				Type:     schema.TypeString,
-				Computed: true,
-			},
-			"primary_region": {
-				Type:     schema.TypeString,
-				Computed: true,
-			},
-			"recovery_time_objective_minutes": {
-				Type:     schema.TypeInt,
-				Computed: true,
-			},
-			"associated_alarms": {
-				Type:     schema.TypeSet,
-				Computed: true,
-				Elem: &schema.Resource{
-					Schema: map[string]*schema.Schema{
-						names.AttrName: {
-							Type:     schema.TypeString,
-							Computed: true,
-						},
-						"alarm_type": {
-							Type:     schema.TypeString,
-							Computed: true,
-						},
-						"resource_identifier": {
-							Type:     schema.TypeString,
-							Computed: true,
-						},
-						"cross_account_role": {
-							Type:     schema.TypeString,
-							Computed: true,
-						},
-						names.AttrExternalID: {
-							Type:     schema.TypeString,
-							Computed: true,
-						},
-					},
-				},
-			},
-			"trigger": {
-				Type:     schema.TypeList,
-				Computed: true,
-				Elem: &schema.Resource{
-					Schema: map[string]*schema.Schema{
-						names.AttrAction: {
-							Type:     schema.TypeString,
-							Computed: true,
-						},
-						"conditions": {
-							Type:     schema.TypeList,
-							Computed: true,
-							Elem: &schema.Resource{
-								Schema: map[string]*schema.Schema{
-									"associated_alarm_name": {
-										Type:     schema.TypeString,
-										Computed: true,
-									},
-									names.AttrCondition: {
-										Type:     schema.TypeString,
-										Computed: true,
-									},
-								},
-							},
-						},
-						"min_delay_minutes_between_executions": {
-							Type:     schema.TypeInt,
-							Computed: true,
-						},
-						"target_region": {
-							Type:     schema.TypeString,
-							Computed: true,
-						},
-						names.AttrDescription: {
-							Type:     schema.TypeString,
-							Computed: true,
-						},
-					},
-				},
-			},
-			names.AttrOwner: {
-				Type:     schema.TypeString,
-				Computed: true,
-			},
-			"updated_at": {
-				Type:     schema.TypeString,
-				Computed: true,
-			},
-			names.AttrVersion: {
-				Type:     schema.TypeString,
-				Computed: true,
-			},
-			names.AttrTags: tftags.TagsSchemaComputed(),
 		},
+		Blocks: map[string]fwschema.Block{},
 	}
 }
 
-func dataSourcePlanRead(ctx context.Context, d *schema.ResourceData, meta any) diag.Diagnostics {
-	var diags diag.Diagnostics
-	conn := meta.(*conns.AWSClient).ARCRegionSwitchClient(ctx)
+type dataSourcePlanModel struct {
+	ARN                          types.String `tfsdk:"arn"`
+	Region                       types.String `tfsdk:"region"`
+	Name                         types.String `tfsdk:"name"`
+	ExecutionRole                types.String `tfsdk:"execution_role"`
+	RecoveryApproach             types.String `tfsdk:"recovery_approach"`
+	Regions                      types.List   `tfsdk:"regions"`
+	Description                  types.String `tfsdk:"description"`
+	PrimaryRegion                types.String `tfsdk:"primary_region"`
+	RecoveryTimeObjectiveMinutes types.Int64  `tfsdk:"recovery_time_objective_minutes"`
+	WaitForHealthChecks          types.Bool   `tfsdk:"wait_for_health_checks"`
+	Route53HealthChecks          types.List   `tfsdk:"route53_health_checks"`
+}
 
-	arn := d.Get(names.AttrARN).(string)
-	plan, err := FindPlanByARN(ctx, conn, arn)
+func (d *dataSourcePlan) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
+	var data dataSourcePlanModel
+	resp.Diagnostics.Append(req.Config.Get(ctx, &data)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 
+	conn := d.Meta().ARCRegionSwitchClient(ctx)
+
+	plan, err := FindPlanByARN(ctx, conn, data.ARN.ValueString())
 	if err != nil {
-		return sdkdiag.AppendErrorf(diags, "reading ARC Region Switch Plan (%s): %s", arn, err)
+		resp.Diagnostics.AddError("reading ARC Region Switch Plan", err.Error())
+		return
 	}
 
-	d.SetId(arn)
-	d.Set(names.AttrARN, plan.Arn)
-	d.Set(names.AttrName, plan.Name)
-	d.Set("execution_role", plan.ExecutionRole)
-	d.Set("recovery_approach", plan.RecoveryApproach)
-	d.Set("regions", plan.Regions)
-	d.Set(names.AttrDescription, plan.Description)
-	d.Set("primary_region", plan.PrimaryRegion)
-	d.Set("recovery_time_objective_minutes", plan.RecoveryTimeObjectiveMinutes)
-	d.Set(names.AttrOwner, plan.Owner)
-	if plan.UpdatedAt != nil {
-		d.Set("updated_at", plan.UpdatedAt.Format(time.RFC3339))
-	}
-	d.Set(names.AttrVersion, plan.Version)
+	data.ARN = types.StringValue(aws.ToString(plan.Arn))
+	data.Name = types.StringValue(aws.ToString(plan.Name))
+	data.ExecutionRole = types.StringValue(aws.ToString(plan.ExecutionRole))
+	data.RecoveryApproach = types.StringValue(string(plan.RecoveryApproach))
 
-	if err := d.Set("workflow", flattenWorkflows(plan.Workflows)); err != nil {
-		return sdkdiag.AppendErrorf(diags, "setting workflow: %s", err)
+	regions, diags := types.ListValueFrom(ctx, types.StringType, plan.Regions)
+	resp.Diagnostics.Append(diags...)
+	data.Regions = regions
+
+	if plan.Description != nil {
+		data.Description = types.StringValue(aws.ToString(plan.Description))
+	} else {
+		data.Description = types.StringNull()
 	}
 
-	if err := d.Set("associated_alarms", flattenAssociatedAlarms(plan.AssociatedAlarms)); err != nil {
-		return sdkdiag.AppendErrorf(diags, "setting associated_alarms: %s", err)
+	if plan.PrimaryRegion != nil {
+		data.PrimaryRegion = types.StringValue(aws.ToString(plan.PrimaryRegion))
+	} else {
+		data.PrimaryRegion = types.StringNull()
 	}
 
-	if err := d.Set("trigger", flattenTriggers(plan.Triggers)); err != nil {
-		return sdkdiag.AppendErrorf(diags, "setting trigger: %s", err)
+	if plan.RecoveryTimeObjectiveMinutes != nil {
+		data.RecoveryTimeObjectiveMinutes = types.Int64Value(int64(aws.ToInt32(plan.RecoveryTimeObjectiveMinutes)))
+	} else {
+		data.RecoveryTimeObjectiveMinutes = types.Int64Null()
 	}
 
-	tags, err := ListTags(ctx, conn, arn)
-	if err != nil {
-		return sdkdiag.AppendErrorf(diags, "listing tags for ARC Region Switch Plan (%s): %s", arn, err)
-	}
+	// Always fetch Route53 health checks
+	var healthChecks []awstypes.Route53HealthCheck
+	var healthCheckErr error
 
-	ignoreTagsConfig := meta.(*conns.AWSClient).IgnoreTagsConfig(ctx)
-	if err := d.Set(names.AttrTags, tags.IgnoreAWS().IgnoreConfig(ignoreTagsConfig).Map()); err != nil {
-		return sdkdiag.AppendErrorf(diags, "setting tags: %s", err)
-	}
-
-	// Fetch Route53 health checks for this plan
-	// Health check IDs are populated asynchronously ~4 minutes after plan creation
-	if d.Get("wait_for_health_checks").(bool) {
+	if data.WaitForHealthChecks.ValueBool() {
 		// Wait for health check IDs to be populated (takes ~4 minutes)
-		timeout := d.Timeout(schema.TimeoutRead)
-		err := retry.RetryContext(ctx, timeout, func() *retry.RetryError {
-			healthChecks, err := listRoute53HealthChecks(ctx, conn, arn)
-			if err != nil {
-				return retry.NonRetryableError(err)
+		timeout := 5 * time.Minute
+		healthCheckErr = retry.RetryContext(ctx, timeout, func() *retry.RetryError {
+			healthChecks, healthCheckErr = listRoute53HealthChecks(ctx, conn, data.ARN.ValueString())
+			if healthCheckErr != nil {
+				return retry.NonRetryableError(healthCheckErr)
 			}
 
 			// Check if all health check IDs are populated
@@ -278,101 +180,77 @@ func dataSourcePlanRead(ctx context.Context, d *schema.ResourceData, meta any) d
 				}
 			}
 
-			if err := d.Set("route53_health_checks", flattenRoute53HealthChecks(healthChecks)); err != nil {
-				return retry.NonRetryableError(fmt.Errorf("setting route53_health_checks: %s", err))
-			}
-
 			return nil
 		})
-		if tfresource.TimedOut(err) {
-			healthChecks, err := listRoute53HealthChecks(ctx, conn, arn)
-			if err != nil {
-				return sdkdiag.AppendErrorf(diags, "reading Route53 health checks: %s", err)
-			}
-			if err := d.Set("route53_health_checks", flattenRoute53HealthChecks(healthChecks)); err != nil {
-				return sdkdiag.AppendErrorf(diags, "setting route53_health_checks: %s", err)
+		if tfresource.TimedOut(healthCheckErr) {
+			healthChecks, healthCheckErr = listRoute53HealthChecks(ctx, conn, data.ARN.ValueString())
+			if healthCheckErr != nil {
+				resp.Diagnostics.AddError("reading Route53 health checks", healthCheckErr.Error())
+				return
 			}
 		}
-		if err != nil {
-			return sdkdiag.AppendErrorf(diags, "waiting for Route53 health checks: %s", err)
+		if healthCheckErr != nil {
+			resp.Diagnostics.AddError("waiting for Route53 health checks", healthCheckErr.Error())
+			return
 		}
 	} else {
 		// Fetch health checks without waiting
-		healthChecks, err := listRoute53HealthChecks(ctx, conn, arn)
-		if err != nil {
-			return sdkdiag.AppendErrorf(diags, "listing Route53 health checks: %s", err)
-		}
-		if err := d.Set("route53_health_checks", flattenRoute53HealthChecks(healthChecks)); err != nil {
-			return sdkdiag.AppendErrorf(diags, "setting route53_health_checks: %s", err)
+		healthChecks, healthCheckErr = listRoute53HealthChecks(ctx, conn, data.ARN.ValueString())
+		if healthCheckErr != nil {
+			resp.Diagnostics.AddError("listing Route53 health checks", healthCheckErr.Error())
+			return
 		}
 	}
 
-	return diags
-}
-
-func dataSourceStepSchema() map[string]*schema.Schema {
-	stepSchema := stepSchema()
-
-	// Convert all fields to computed and clear validation constraints
-	for _, field := range stepSchema {
-		field.Required = false
-		field.Optional = false
-		field.Computed = true
-		field.ValidateFunc = nil
-		field.MaxItems = 0
-		field.MinItems = 0
-
-		// Recursively handle nested resources
-		if field.Elem != nil {
-			if resource, ok := field.Elem.(*schema.Resource); ok {
-				for _, nestedField := range resource.Schema {
-					nestedField.Required = false
-					nestedField.Optional = false
-					nestedField.Computed = true
-					nestedField.ValidateFunc = nil
-					nestedField.MaxItems = 0
-					nestedField.MinItems = 0
-				}
-			}
-		}
-	}
-
-	return stepSchema
-}
-
-func listRoute53HealthChecks(ctx context.Context, conn *arcregionswitch.Client, planArn string) ([]types.Route53HealthCheck, error) {
-	input := arcregionswitch.ListRoute53HealthChecksInput{
-		Arn: aws.String(planArn),
-	}
-
-	var healthChecks []types.Route53HealthCheck
-	paginator := arcregionswitch.NewListRoute53HealthChecksPaginator(conn, &input)
-
-	for paginator.HasMorePages() {
-		page, err := paginator.NextPage(ctx)
-		if err != nil {
-			return nil, err
-		}
-
-		healthChecks = append(healthChecks, page.HealthChecks...)
-	}
-
-	return healthChecks, nil
-}
-
-func flattenRoute53HealthChecks(healthChecks []types.Route53HealthCheck) []any {
+	// Convert health checks to Framework types
 	if len(healthChecks) == 0 {
-		return nil
+		// Return known empty list (not unknown) when plan exists but has no health checks
+		data.Route53HealthChecks = types.ListValueMust(types.ObjectType{
+			AttrTypes: map[string]attr.Type{
+				"health_check_id":      types.StringType,
+				names.AttrHostedZoneID: types.StringType,
+				"record_name":          types.StringType,
+				names.AttrRegion:       types.StringType,
+			},
+		}, []attr.Value{})
+		resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+		return
 	}
 
-	var result []any
-	for _, hc := range healthChecks {
-		result = append(result, map[string]any{
-			"health_check_id":      aws.ToString(hc.HealthCheckId),
-			names.AttrHostedZoneID: aws.ToString(hc.HostedZoneId),
-			"record_name":          aws.ToString(hc.RecordName),
-			names.AttrRegion:       aws.ToString(hc.Region),
-		})
+	healthCheckElements := make([]attr.Value, len(healthChecks))
+	for i, hc := range healthChecks {
+		healthCheckAttrs := map[string]attr.Value{
+			"health_check_id":      types.StringValue(aws.ToString(hc.HealthCheckId)),
+			names.AttrHostedZoneID: types.StringValue(aws.ToString(hc.HostedZoneId)),
+			"record_name":          types.StringValue(aws.ToString(hc.RecordName)),
+			names.AttrRegion:       types.StringValue(aws.ToString(hc.Region)),
+		}
+		healthCheckObj, objDiags := types.ObjectValue(map[string]attr.Type{
+			"health_check_id":      types.StringType,
+			names.AttrHostedZoneID: types.StringType,
+			"record_name":          types.StringType,
+			names.AttrRegion:       types.StringType,
+		}, healthCheckAttrs)
+		resp.Diagnostics.Append(objDiags...)
+		healthCheckElements[i] = healthCheckObj
 	}
-	return result
+
+	healthChecksList, listDiags := types.ListValue(types.ObjectType{
+		AttrTypes: map[string]attr.Type{
+			"health_check_id":      types.StringType,
+			names.AttrHostedZoneID: types.StringType,
+			"record_name":          types.StringType,
+			names.AttrRegion:       types.StringType,
+		},
+	}, healthCheckElements)
+	resp.Diagnostics.Append(listDiags...)
+	data.Route53HealthChecks = healthChecksList
+
+	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+}
+
+func (d *dataSourcePlan) ValidateModel(ctx context.Context, schema *fwschema.Schema) fwdiag.Diagnostics {
+	var diags fwdiag.Diagnostics
+	// Basic validation is handled by the schema validators
+	return diags
 }

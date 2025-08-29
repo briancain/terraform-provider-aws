@@ -19,17 +19,9 @@ import (
 type servicePackage struct{}
 
 func (p *servicePackage) FrameworkDataSources(ctx context.Context) []*inttypes.ServicePackageFrameworkDataSource {
-	return []*inttypes.ServicePackageFrameworkDataSource{}
-}
-
-func (p *servicePackage) FrameworkResources(ctx context.Context) []*inttypes.ServicePackageFrameworkResource {
-	return []*inttypes.ServicePackageFrameworkResource{}
-}
-
-func (p *servicePackage) SDKDataSources(ctx context.Context) []*inttypes.ServicePackageSDKDataSource {
-	return []*inttypes.ServicePackageSDKDataSource{
+	return []*inttypes.ServicePackageFrameworkDataSource{
 		{
-			Factory:  DataSourcePlan,
+			Factory:  newDataSourcePlan,
 			TypeName: "aws_arcregionswitch_plan",
 			Name:     "Plan",
 			Region:   unique.Make(inttypes.ResourceRegionDefault()),
@@ -37,18 +29,26 @@ func (p *servicePackage) SDKDataSources(ctx context.Context) []*inttypes.Service
 	}
 }
 
-func (p *servicePackage) SDKResources(ctx context.Context) []*inttypes.ServicePackageSDKResource {
-	return []*inttypes.ServicePackageSDKResource{
+func (p *servicePackage) FrameworkResources(ctx context.Context) []*inttypes.ServicePackageFrameworkResource {
+	return []*inttypes.ServicePackageFrameworkResource{
 		{
-			Factory:  ResourcePlan,
+			Factory:  newResourcePlan,
 			TypeName: "aws_arcregionswitch_plan",
 			Name:     "Plan",
 			Tags: unique.Make(inttypes.ServicePackageResourceTags{
-				IdentifierAttribute: names.AttrARN,
+				IdentifierAttribute: "names.AttrARN",
 			}),
 			Region: unique.Make(inttypes.ResourceRegionDefault()),
 		},
 	}
+}
+
+func (p *servicePackage) SDKDataSources(ctx context.Context) []*inttypes.ServicePackageSDKDataSource {
+	return []*inttypes.ServicePackageSDKDataSource{}
+}
+
+func (p *servicePackage) SDKResources(ctx context.Context) []*inttypes.ServicePackageSDKResource {
+	return []*inttypes.ServicePackageSDKResource{}
 }
 
 func (p *servicePackage) ServicePackageName() string {

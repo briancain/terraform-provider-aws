@@ -28,15 +28,15 @@ func TestAccARCRegionSwitchPlan_validation(t *testing.T) {
 		Steps: []resource.TestStep{
 			{
 				Config:      testAccPlanConfig_invalidRecoveryApproach(rName),
-				ExpectError: regexache.MustCompile(`expected recovery_approach to be one of`),
+				ExpectError: regexache.MustCompile(`Attribute recovery_approach value must be one of`),
 			},
 			{
 				Config:      testAccPlanConfig_invalidExecutionRole(rName),
-				ExpectError: regexache.MustCompile(`invalid ARN`),
+				ExpectError: regexache.MustCompile(`value must be a valid ARN`),
 			},
 			{
 				Config:      testAccPlanConfig_singleRegion(rName),
-				ExpectError: regexache.MustCompile(`Member must have length greater than or equal to 2`),
+				ExpectError: regexache.MustCompile(`length greater than or equal to 2`),
 			},
 		},
 	})
